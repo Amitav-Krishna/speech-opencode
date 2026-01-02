@@ -2,7 +2,7 @@
 
 Voice input plugin for [OpenCode](https://opencode.ai) using OpenAI Whisper.
 
-Record audio from your microphone and transcribe it to text using OpenAI's Whisper API.
+Record audio from your microphone and transcribe it to text using OpenAI's Whisper API. **Recording automatically stops when you stop talking** - no need to specify a duration!
 
 ## Installation
 
@@ -26,33 +26,32 @@ export OPENAI_API_KEY=your-api-key
 
 ### Audio Recording Tools
 
-**Linux (PulseAudio/PipeWire):**
+**sox** is required for audio recording with silence detection:
+
 ```bash
+# macOS
+brew install sox
+
 # Ubuntu/Debian
-sudo apt install pulseaudio-utils
+sudo apt install sox
 
 # Fedora
-sudo dnf install pulseaudio-utils
+sudo dnf install sox
 
 # Arch
-sudo pacman -S pulseaudio-utils
-```
-
-**macOS:**
-```bash
-brew install sox
+sudo pacman -S sox
 ```
 
 ## Usage
 
-Once installed, OpenCode will have access to a `voice` tool. You can ask OpenCode to use it:
+Once installed, OpenCode will have access to a `voice` tool. Just ask OpenCode:
 
 - "Listen to my voice"
 - "Record what I say"
 - "Use voice input"
-- "Transcribe my speech for 10 seconds"
+- "voice"
 
-The tool accepts an optional `duration` parameter (default: 5 seconds, max: 60 seconds).
+**Recording automatically stops after 7 seconds of silence**, so just speak naturally and pause when you're done.
 
 ## Configuration
 
@@ -66,11 +65,11 @@ export default VoicePlugin({
   // Optional: specify language (auto-detects if not set)
   language: "en",
   
-  // Optional: default recording duration in seconds
-  defaultDuration: 5,
+  // Optional: seconds of silence before stopping (default 7)
+  silenceDuration: 7,
   
-  // Optional: maximum recording duration in seconds
-  maxDuration: 60,
+  // Optional: maximum recording time as safety timeout (default 300 = 5 min)
+  maxDuration: 300,
   
   // Optional: override API key (defaults to OPENAI_API_KEY env var)
   apiKey: process.env.MY_OPENAI_KEY,
@@ -92,9 +91,10 @@ Leave `language` unset for automatic detection.
 
 ## How It Works
 
-1. Records audio from your default microphone using system tools
-2. Sends the audio to OpenAI's Whisper API for transcription
-3. Returns the transcribed text to OpenCode
+1. Starts recording from your microphone when you begin speaking
+2. Automatically stops after detecting 7 seconds of silence
+3. Sends the audio to OpenAI's Whisper API for transcription
+4. Returns the transcribed text to OpenCode
 
 ## Troubleshooting
 
@@ -103,8 +103,12 @@ Leave `language` unset for automatic detection.
 - Verify the correct input device is selected in your system settings
 - On Linux, use `pavucontrol` to check input sources
 
+### Recording doesn't stop
+- Make sure you pause speaking for at least 7 seconds
+- Check that background noise isn't being detected as speech
+
 ### Recording fails
-- Ensure you have the required audio tools installed
+- Ensure sox is installed: `which rec`
 - Check that your microphone permissions are granted
 
 ## License

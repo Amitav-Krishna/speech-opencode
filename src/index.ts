@@ -6,73 +6,51 @@ import { tmpdir } from "os"
 import { join } from "path"
 
 /**
- * Gets the first available non-monitor, non-bluetooth audio input source
- * Works with PulseAudio and PipeWire on Linux
+ * Records audio from the microphone with automatic silence detection.
+ * Recording stops after the specified silence duration.
+ * Uses sox on both Linux and macOS for silence detection.
+ * 
+ * @param maxDurationSeconds - Maximum recording time (safety timeout)
+ * @param silenceDuration - Seconds of silence before stopping (default 7)
  */
-async function getDefaultInputDevice(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const pactl = spawn("pactl", ["list", "sources", "short"])
-    let output = ""
-
-    pactl.stdout.on("data", (data) => {
-      output += data.toString()
-    })
-
-    pactl.on("close", () => {
-      const lines = output.trim().split("\n")
-      for (const line of lines) {
-        const parts = line.split("\t")
-        if (parts.length >= 2) {
-          const name = parts[1]
-          // Skip monitor sources and bluetooth (prefer hardware input)
-          if (!name.includes(".monitor") && !name.includes("bluez")) {
-            resolve(name)
-            return
-          }
-        }
-      }
-      resolve(null)
-    })
-
-    pactl.on("error", () => resolve(null))
-  })
+async function recordAudio(
+  maxDurationSeconds: number = 300,
+  silenceDuration: number = 7
+): Promise<string> {
+  const tempFile = join(tmpdir(), `opencode-voice-${Date.now()}.wav`)
+  
+  // Use sox with silence detection on all platforms
+  return recordWithSilenceDetection(tempFile, maxDurationSeconds, silenceDuration)
 }
 
 /**
- * Records audio from the microphone
- * - Linux: Uses parecord (PulseAudio/PipeWire) or arecord (ALSA)
- * - macOS: Uses sox (rec command)
+ * Records audio using sox with silence detection.
+ * Recording automatically stops after detecting silence.
+ * 
+ * Sox silence syntax: silence [above_periods] [duration] [threshold] [below_periods] [duration] [threshold]
+ * - above_periods 1: need 1 period of audio above threshold to start
+ * - 0.1 3%: audio must be above 3% for 0.1s to count as speech start
+ * - below_periods 1: need 1 period below threshold to stop
+ * - silenceDuration 3%: stop after silenceDuration seconds below 3%
  */
-async function recordAudio(durationSeconds: number = 5): Promise<string> {
-  const tempFile = join(tmpdir(), `opencode-voice-${Date.now()}.wav`)
-  const platform = process.platform
-
-  if (platform === "darwin") {
-    // macOS: use sox
-    return recordWithSox(tempFile, durationSeconds)
-  } else {
-    // Linux: use parecord or arecord
-    return recordWithPulseAudio(tempFile, durationSeconds)
-  }
-}
-
-async function recordWithSox(
+async function recordWithSilenceDetection(
   tempFile: string,
-  durationSeconds: number
+  maxDurationSeconds: number,
+  silenceDuration: number
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const recorder = spawn("rec", [
+    // Use timeout to enforce max duration, sox for silence detection
+    const recorder = spawn("timeout", [
+      maxDurationSeconds.toString(),
+      "rec",
       "-q",
-      "-r",
-      "16000",
-      "-c",
-      "1",
-      "-b",
-      "16",
+      "-r", "16000",
+      "-c", "1",
+      "-b", "16",
       tempFile,
-      "trim",
-      "0",
-      durationSeconds.toString(),
+      "silence",
+      "1", "0.1", "3%",  // Start recording when speech detected (above 3% for 0.1s)
+      "1", `${silenceDuration}.0`, "3%",  // Stop after silenceDuration seconds of silence (below 3%)
     ])
 
     let errorOutput = ""
@@ -83,80 +61,17 @@ async function recordWithSox(
     recorder.on("error", () => {
       reject(
         new Error(
-          "sox not found. Please install it:\n" + "  - macOS: brew install sox"
+          "sox not found. Please install it:\n" +
+          "  - macOS: brew install sox\n" +
+          "  - Ubuntu/Debian: sudo apt install sox\n" +
+          "  - Fedora: sudo dnf install sox\n" +
+          "  - Arch: sudo pacman -S sox"
         )
       )
     })
 
     recorder.on("close", (code) => {
-      if (code === 0) {
-        resolve(tempFile)
-      } else {
-        reject(new Error(`Recording failed: ${errorOutput}`))
-      }
-    })
-  })
-}
-
-async function recordWithPulseAudio(
-  tempFile: string,
-  durationSeconds: number
-): Promise<string> {
-  const inputDevice = await getDefaultInputDevice()
-
-  return new Promise((resolve, reject) => {
-    const args = [(durationSeconds + 1).toString(), "parecord"]
-
-    if (inputDevice) {
-      args.push(`--device=${inputDevice}`)
-    }
-
-    args.push("--file-format=wav", tempFile)
-
-    const recorder = spawn("timeout", args)
-    let errorOutput = ""
-
-    recorder.stderr.on("data", (data) => {
-      errorOutput += data.toString()
-    })
-
-    recorder.on("error", () => {
-      // Fallback to arecord
-      const arecord = spawn("arecord", [
-        "-q",
-        "-f",
-        "S16_LE",
-        "-r",
-        "16000",
-        "-c",
-        "1",
-        "-d",
-        durationSeconds.toString(),
-        tempFile,
-      ])
-
-      arecord.on("error", () => {
-        reject(
-          new Error(
-            "No audio recorder found. Please install:\n" +
-              "  - Ubuntu/Debian: sudo apt install pulseaudio-utils\n" +
-              "  - Fedora: sudo dnf install pulseaudio-utils\n" +
-              "  - Arch: sudo pacman -S pulseaudio-utils"
-          )
-        )
-      })
-
-      arecord.on("close", (code) => {
-        if (code === 0) {
-          resolve(tempFile)
-        } else {
-          reject(new Error(`arecord failed with code ${code}`))
-        }
-      })
-    })
-
-    recorder.on("close", (code) => {
-      // timeout returns 124 when it kills the process, which is expected
+      // code 0 = normal exit, 124 = timeout killed it (max duration reached)
       if (code === 0 || code === 124) {
         resolve(tempFile)
       } else {
@@ -192,9 +107,9 @@ export interface VoicePluginOptions {
   apiKey?: string
   /** Language code for transcription (e.g., "en", "es", "fr"). Auto-detects if not specified */
   language?: string
-  /** Default recording duration in seconds */
-  defaultDuration?: number
-  /** Maximum allowed recording duration in seconds */
+  /** Seconds of silence before stopping recording (default 7) */
+  silenceDuration?: number
+  /** Maximum recording duration in seconds as a safety timeout (default 300 = 5 minutes) */
   maxDuration?: number
 }
 
@@ -225,8 +140,8 @@ export const VoicePlugin =
     const {
       apiKey = process.env.OPENAI_API_KEY,
       language,
-      defaultDuration = 5,
-      maxDuration = 60,
+      silenceDuration = 7,
+      maxDuration = 300,
     } = options
 
     if (!apiKey) {
@@ -241,25 +156,17 @@ export const VoicePlugin =
           description:
             "Records audio from the user's microphone and transcribes it using OpenAI Whisper. " +
             "Use this tool when the user wants to provide input via voice or speech. " +
-            `The tool will record for the specified duration (default ${defaultDuration} seconds) and return the transcribed text.`,
-          args: {
-            duration: tool.schema
-              .number()
-              .optional()
-              .describe(
-                `Recording duration in seconds. Default is ${defaultDuration} seconds. Max is ${maxDuration} seconds.`
-              ),
-          },
-          async execute(args) {
+            "Recording automatically stops after detecting silence, so the user can speak naturally without specifying a duration.",
+          args: {},
+          async execute() {
             if (!apiKey) {
               return "Error: OPENAI_API_KEY environment variable is not set. Please set it to use voice transcription."
             }
 
-            const duration = Math.min(args.duration || defaultDuration, maxDuration)
             let audioFile: string | null = null
 
             try {
-              audioFile = await recordAudio(duration)
+              audioFile = await recordAudio(maxDuration, silenceDuration)
               const transcription = await transcribeAudio(
                 audioFile,
                 apiKey,
