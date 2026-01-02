@@ -1,0 +1,56 @@
+{
+  "name": "speech-opencode",
+  "version": "1.0.0",
+  "description": "Voice input plugin for OpenCode using OpenAI Whisper",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "voice",
+    "speech-to-text",
+    "whisper",
+    "openai",
+    "transcription"
+  ],
+  "author": {
+    "name": "Amitav Krishna",
+    "email": "amitavkrishna@proton.me",
+    "url": "https://amitav.net"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/amitav-krishna/speech-opencode"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "openai": "^4.77.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=0.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
